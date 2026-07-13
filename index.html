@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Q'hay — Tracker de nevera</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="page">
+  <div class="page-header">
+    <div class="title">Q'hay — Tracker de nevera</div>
+    <div class="subtitle">Registra entradas, salidas, y consulta tu inventario</div>
+  </div>
+
+  <div class="app-frame">
+
+    <!-- ===== Pantalla: inventario ===== -->
+    <section class="screen" id="screen-inventory">
+      <div class="screen-header">
+        <div>
+          <div class="heading">Tu nevera</div>
+          <div class="subheading" id="inventory-subtitle"></div>
+        </div>
+        <button class="icon-btn" id="btn-go-salida" aria-label="Registrar salida">↗</button>
+      </div>
+
+      <div class="screen-body" id="inventory-list"></div>
+
+      <div class="fab">
+        <button class="icon-btn filled" id="btn-fab-entrada" aria-label="Agregar producto">+</button>
+      </div>
+    </section>
+
+    <!-- ===== Pantalla: nueva entrada ===== -->
+    <section class="screen" id="screen-entrada" hidden>
+      <div class="screen-header with-back">
+        <button class="icon-btn" id="btn-entrada-back" aria-label="Volver">←</button>
+        <div class="heading">Nueva entrada</div>
+      </div>
+
+      <div class="screen-body form">
+        <div class="field" id="field-entrada-nombre">
+          <label for="input-entrada-nombre">Nombre del producto</label>
+          <input type="text" id="input-entrada-nombre" placeholder="Ej. Pollo troceado">
+          <div class="error-message"></div>
+        </div>
+
+        <div class="field" id="field-entrada-porciones">
+          <label for="input-entrada-porciones">Cuántas porciones</label>
+          <input type="number" id="input-entrada-porciones" placeholder="1" min="1" step="1">
+          <div class="error-message"></div>
+        </div>
+
+        <div class="field" id="field-entrada-fecha">
+          <label for="input-entrada-fecha">Fecha de entrada</label>
+          <input type="date" id="input-entrada-fecha">
+          <div class="error-message"></div>
+        </div>
+
+        <div class="hint">El vencimiento se calcula automáticamente: fecha de entrada + 3 meses.</div>
+      </div>
+
+      <div class="screen-footer">
+        <button class="btn full-width lg" id="btn-submit-entrada">Guardar entrada</button>
+      </div>
+    </section>
+
+    <!-- ===== Pantalla: nueva salida ===== -->
+    <section class="screen" id="screen-salida" hidden>
+      <div class="screen-header with-back">
+        <button class="icon-btn" id="btn-salida-back" aria-label="Volver">←</button>
+        <div class="heading">Nueva salida</div>
+      </div>
+
+      <div class="screen-body form">
+        <div class="field">
+          <label for="select-salida-producto">Producto</label>
+          <select id="select-salida-producto">
+            <option value="">Elige un producto</option>
+          </select>
+        </div>
+
+        <div class="no-stock-message" id="no-stock-message" hidden>No tienes productos con porciones disponibles.</div>
+
+        <div id="salida-portions-section" hidden>
+          <div class="section-label">Porciones disponibles (la más antigua primero)</div>
+          <div id="salida-portions-list" style="display:flex; flex-direction:column; gap:10px; margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div class="screen-footer">
+        <button class="btn full-width lg" id="btn-submit-salida" disabled>Registrar salida</button>
+      </div>
+    </section>
+
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
