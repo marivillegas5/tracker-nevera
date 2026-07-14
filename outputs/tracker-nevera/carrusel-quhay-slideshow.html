@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carrusel Q'hay</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #000;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .viewer {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    aspect-ratio: 4 / 5;
+    margin: 0 auto;
+    background: #111;
+    overflow: hidden;
+  }
+  .slide-img {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+  }
+  .slide-img.active {
+    display: block;
+  }
+  .arrow {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 50%;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    z-index: 5;
+  }
+  .arrow-left { left: 0; }
+  .arrow-right { right: 0; }
+  .dots {
+    position: absolute;
+    bottom: 16px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    z-index: 6;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.4);
+    cursor: pointer;
+  }
+  .dot.active {
+    background: #fff;
+  }
+  .counter {
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    color: rgba(255,255,255,0.85);
+    font-size: 13px;
+    font-weight: 600;
+    z-index: 6;
+  }
+</style>
+</head>
+<body>
+
+<div class="viewer" id="viewer">
+  <img class="slide-img active" src="slides/quhay-slide-01.png" data-i="0">
+  <img class="slide-img" src="slides/quhay-slide-02.png" data-i="1">
+  <img class="slide-img" src="slides/quhay-slide-03.png" data-i="2">
+  <img class="slide-img" src="slides/quhay-slide-04.png" data-i="3">
+  <img class="slide-img" src="slides/quhay-slide-05.png" data-i="4">
+  <img class="slide-img" src="slides/quhay-slide-06.png" data-i="5">
+  <img class="slide-img" src="slides/quhay-slide-07.png" data-i="6">
+  <img class="slide-img" src="slides/quhay-slide-08-app.png" data-i="7">
+
+  <button class="arrow arrow-left" aria-label="Anterior"></button>
+  <button class="arrow arrow-right" aria-label="Siguiente"></button>
+
+  <div class="counter" id="counter">1 / 8</div>
+
+  <div class="dots" id="dots"></div>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide-img');
+  const dotsWrap = document.getElementById('dots');
+  const counter = document.getElementById('counter');
+  let current = 0;
+
+  slides.forEach((s, i) => {
+    const dot = document.createElement('div');
+    dot.className = 'dot' + (i === 0 ? ' active' : '');
+    dot.addEventListener('click', () => goTo(i));
+    dotsWrap.appendChild(dot);
+  });
+  const dots = document.querySelectorAll('.dot');
+
+  function goTo(i) {
+    if (i < 0) i = slides.length - 1;
+    if (i >= slides.length) i = 0;
+    slides[current].classList.remove('active');
+    dots[current].classList.remove('active');
+    current = i;
+    slides[current].classList.add('active');
+    dots[current].classList.add('active');
+    counter.textContent = (current + 1) + ' / ' + slides.length;
+  }
+
+  document.querySelector('.arrow-left').addEventListener('click', () => goTo(current - 1));
+  document.querySelector('.arrow-right').addEventListener('click', () => goTo(current + 1));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') goTo(current - 1);
+    if (e.key === 'ArrowRight') goTo(current + 1);
+  });
+</script>
+
+</body>
+</html>
