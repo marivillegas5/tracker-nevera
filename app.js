@@ -1,6 +1,10 @@
 const MS_DAY = 86400000;
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-const STORAGE_KEY = 'qhay-tracker-nevera-v1';
+const LEGACY_STORAGE_KEY = 'qhay-tracker-nevera-v1';
+const PIN_OK_KEY = 'qhay-pin-ok';
+const MIGRATED_KEY = 'qhay-migrated-to-supabase';
+
+const db = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
 function normalize(str) {
   return (str || '').trim().toLowerCase();
@@ -29,6 +33,10 @@ function todayStr() {
   return fmtISO(toDateOnly(new Date()));
 }
 
+function parseISODate(str) {
+  return new Date(str + 'T00:00:00');
+}
+
 function statusFor(fechaVenc) {
   const today = toDateOnly(new Date());
   const diffDays = Math.round((fechaVenc - today) / MS_DAY);
@@ -38,44 +46,66 @@ function statusFor(fechaVenc) {
   return { tone: 'fresh', label: 'Fresco' };
 }
 
-function buildSeed() {
-  const today = toDateOnly(new Date());
-  const mkDate = (offsetDays) => new Date(today.getTime() - offsetDays * MS_DAY);
+// ---- Lectura/escritura remota (Supabase) ----
 
-  const seedDefs = [
-    { nombre: 'Sopa de lentejas', porciones: [{ offset: 95 }, { offset: 95 }, { offset: 93 }, { offset: 93 }] },
-    { nombre: 'Pollo troceado', porciones: [{ offset: 87 }, { offset: 87 }, { offset: 80 }] },
-    { nombre: 'Puré de papa', porciones: [{ offset: 60 }, { offset: 60 }] },
-    { nombre: 'Caldo de verduras', porciones: [{ offset: 89 }, { offset: 89 }, { offset: 89 }, { offset: 84 }, { offset: 84 }, { offset: 84 }] },
-    { nombre: 'Lomo de cerdo', porciones: [{ offset: 10 }] },
-  ];
-
-  const products = [];
-  const portions = [];
-  let productId = 1;
-  let portionId = 1;
-
-  seedDefs.forEach(def => {
-    const pid = productId++;
-    products.push({ id: pid, nombre: def.nombre });
-    def.porciones.forEach(p => {
-      const entrada = mkDate(p.offset);
-      portions.push({
-        id: portionId++,
-        productId: pid,
-        fechaEntrada: entrada.getTime(),
-        fechaVencimiento: addMonths(entrada, 3).getTime(),
-        estado: 'activa',
-      });
-    });
-  });
-
-  return { products, portions, nextProductId: productId, nextPortionId: portionId };
+function mapProduct(row) {
+  return { id: row.id, nombre: row.nombre };
 }
 
-function loadState() {
+function mapPortion(row) {
+  return {
+    id: row.id,
+    productId: row.producto_id,
+    fechaEntrada: parseISODate(row.fecha_entrada).getTime(),
+    fechaVencimiento: parseISODate(row.fecha_vencimiento).getTime(),
+    estado: row.estado,
+  };
+}
+
+async function fetchAllData() {
+  const [productosRes, porcionesRes] = await Promise.all([
+    db.from('productos').select('*').order('id'),
+    db.from('porciones').select('*').order('id'),
+  ]);
+  if (productosRes.error) throw productosRes.error;
+  if (porcionesRes.error) throw porcionesRes.error;
+  return {
+    products: productosRes.data.map(mapProduct),
+    portions: porcionesRes.data.map(mapPortion),
+  };
+}
+
+async function insertProduct(nombre) {
+  const { data, error } = await db
+    .from('productos')
+    .insert({ nombre: nombre.trim(), nombre_normalizado: normalize(nombre) })
+    .select()
+    .single();
+  if (error) throw error;
+  return mapProduct(data);
+}
+
+async function insertPortions(productId, fechaEntradaISO, fechaVencimientoISO, n) {
+  const rows = Array.from({ length: n }, () => ({
+    producto_id: productId,
+    fecha_entrada: fechaEntradaISO,
+    fecha_vencimiento: fechaVencimientoISO,
+  }));
+  const { data, error } = await db.from('porciones').insert(rows).select();
+  if (error) throw error;
+  return data.map(mapPortion);
+}
+
+async function markPortionsConsumed(ids) {
+  const { error } = await db.from('porciones').update({ estado: 'consumida' }).in('id', ids);
+  if (error) throw error;
+}
+
+// ---- Migración de datos locales (Fase 1 -> Supabase) ----
+
+function loadLegacyLocalState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch (e) {
@@ -83,25 +113,58 @@ function loadState() {
   }
 }
 
-function saveState() {
-  const { products, portions, nextProductId, nextPortionId } = state;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ products, portions, nextProductId, nextPortionId }));
+async function migrateLocalDataIfNeeded(currentProductCount) {
+  if (currentProductCount > 0) return null;
+  if (localStorage.getItem(MIGRATED_KEY)) return null;
+
+  const local = loadLegacyLocalState();
+  if (!local || !local.products || !local.products.length) {
+    localStorage.setItem(MIGRATED_KEY, '1');
+    return null;
+  }
+
+  const idMap = {};
+  for (const p of local.products) {
+    const inserted = await insertProduct(p.nombre);
+    idMap[p.id] = inserted.id;
+  }
+
+  const rows = (local.portions || [])
+    .filter(por => idMap[por.productId] !== undefined)
+    .map(por => ({
+      producto_id: idMap[por.productId],
+      fecha_entrada: fmtISO(new Date(por.fechaEntrada)),
+      fecha_vencimiento: fmtISO(new Date(por.fechaVencimiento)),
+      estado: por.estado,
+    }));
+
+  if (rows.length) {
+    const { error } = await db.from('porciones').insert(rows);
+    if (error) throw error;
+  }
+
+  localStorage.setItem(MIGRATED_KEY, '1');
+  return fetchAllData();
 }
 
-const persisted = loadState();
+// ---- Estado ----
 
 const state = {
-  screen: 'inventory',
+  screen: 'pin',
+  loading: false,
+  products: [],
+  portions: [],
   expandedId: null,
   entradaNombre: '',
   entradaPorciones: '',
   entradaFecha: todayStr(),
   entradaErrors: {},
+  entradaSubmitting: false,
   salidaProductId: '',
   salidaSelected: [],
+  salidaSubmitting: false,
   toastVisible: false,
   toastMessage: '',
-  ...(persisted || buildSeed()),
 };
 
 let toastTimer = null;
@@ -131,7 +194,47 @@ function activePortionsByProduct(pid) {
   return state.portions.filter(p => p.productId === pid && p.estado === 'activa');
 }
 
-function submitEntrada() {
+// ---- Carga de datos ----
+
+async function loadData() {
+  state.loading = true;
+  render();
+  try {
+    let fresh = await fetchAllData();
+    if (fresh.products.length === 0) {
+      const migrated = await migrateLocalDataIfNeeded(fresh.products.length);
+      if (migrated) fresh = migrated;
+    }
+    state.products = fresh.products;
+    state.portions = fresh.portions;
+  } catch (e) {
+    showToast('No se pudo conectar con tu inventario. Revisa tu conexión e intenta de nuevo.');
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+// ---- PIN ----
+
+function submitPin() {
+  const val = el.inputPin.value.trim();
+  if (val && val === CONFIG.APP_PIN) {
+    localStorage.setItem(PIN_OK_KEY, '1');
+    el.inputPin.value = '';
+    setFieldError(el.fieldPin, null);
+    state.screen = 'inventory';
+    render();
+    loadData();
+  } else {
+    setFieldError(el.fieldPin, 'PIN incorrecto.');
+  }
+}
+
+// ---- Entrada ----
+
+async function submitEntrada() {
+  if (state.entradaSubmitting) return;
   const { entradaNombre, entradaPorciones, entradaFecha } = state;
   const errors = {};
   if (!entradaNombre.trim()) errors.nombre = 'Escribe el nombre del producto.';
@@ -140,7 +243,7 @@ function submitEntrada() {
   if (!entradaFecha) {
     errors.fecha = 'Elige una fecha de entrada.';
   } else {
-    const fecha = new Date(entradaFecha + 'T00:00:00');
+    const fecha = parseISODate(entradaFecha);
     if (fecha > toDateOnly(new Date())) errors.fecha = 'No puede ser una fecha futura.';
   }
   if (Object.keys(errors).length) {
@@ -149,37 +252,38 @@ function submitEntrada() {
     return;
   }
 
-  const norm = normalize(entradaNombre);
-  let existing = state.products.find(p => normalize(p.nombre) === norm);
-  if (!existing) {
-    existing = { id: state.nextProductId, nombre: entradaNombre.trim() };
-    state.products = [...state.products, existing];
-    state.nextProductId += 1;
-  }
-
-  const fecha = new Date(entradaFecha + 'T00:00:00');
-  const vencimiento = addMonths(fecha, 3);
-  const newPortions = [];
-  for (let i = 0; i < n; i++) {
-    newPortions.push({
-      id: state.nextPortionId++,
-      productId: existing.id,
-      fechaEntrada: fecha.getTime(),
-      fechaVencimiento: vencimiento.getTime(),
-      estado: 'activa',
-    });
-  }
-
-  state.portions = [...state.portions, ...newPortions];
-  state.entradaNombre = '';
-  state.entradaPorciones = '';
-  state.entradaFecha = todayStr();
-  state.entradaErrors = {};
-  state.screen = 'inventory';
-  saveState();
+  state.entradaSubmitting = true;
   render();
-  showToast(`Agregaste ${n} ${n === 1 ? 'porción' : 'porciones'} de ${existing.nombre} a tu nevera.`);
+
+  try {
+    const norm = normalize(entradaNombre);
+    let existing = state.products.find(p => normalize(p.nombre) === norm);
+    if (!existing) {
+      existing = await insertProduct(entradaNombre);
+      state.products = [...state.products, existing];
+    }
+
+    const fecha = parseISODate(entradaFecha);
+    const vencimiento = addMonths(fecha, 3);
+    const newPortions = await insertPortions(existing.id, entradaFecha, fmtISO(vencimiento), n);
+
+    state.portions = [...state.portions, ...newPortions];
+    state.entradaNombre = '';
+    state.entradaPorciones = '';
+    state.entradaFecha = todayStr();
+    state.entradaErrors = {};
+    state.screen = 'inventory';
+    state.entradaSubmitting = false;
+    render();
+    showToast(`Agregaste ${n} ${n === 1 ? 'porción' : 'porciones'} de ${existing.nombre} a tu nevera.`);
+  } catch (e) {
+    state.entradaSubmitting = false;
+    render();
+    showToast('No se pudo guardar la entrada. Intenta de nuevo.');
+  }
 }
+
+// ---- Salida ----
 
 function togglePortionSelected(id) {
   const has = state.salidaSelected.includes(id);
@@ -187,21 +291,38 @@ function togglePortionSelected(id) {
   render();
 }
 
-function submitSalida() {
+async function submitSalida() {
+  if (state.salidaSubmitting) return;
   const { salidaSelected } = state;
   if (!salidaSelected.length) return;
-  state.portions = state.portions.map(p => salidaSelected.includes(p.id) ? { ...p, estado: 'consumida' } : p);
-  const count = salidaSelected.length;
-  state.salidaProductId = '';
-  state.salidaSelected = [];
-  state.screen = 'inventory';
-  saveState();
+
+  state.salidaSubmitting = true;
   render();
-  showToast(`Salida registrada: ${count} ${count === 1 ? 'porción' : 'porciones'}.`);
+
+  try {
+    await markPortionsConsumed(salidaSelected);
+    state.portions = state.portions.map(p => salidaSelected.includes(p.id) ? { ...p, estado: 'consumida' } : p);
+    const count = salidaSelected.length;
+    state.salidaProductId = '';
+    state.salidaSelected = [];
+    state.screen = 'inventory';
+    state.salidaSubmitting = false;
+    render();
+    showToast(`Salida registrada: ${count} ${count === 1 ? 'porción' : 'porciones'}.`);
+  } catch (e) {
+    state.salidaSubmitting = false;
+    render();
+    showToast('No se pudo registrar la salida. Intenta de nuevo.');
+  }
 }
 
 // ---- DOM refs ----
 const el = {
+  screenPin: document.getElementById('screen-pin'),
+  fieldPin: document.getElementById('field-pin'),
+  inputPin: document.getElementById('input-pin'),
+  btnSubmitPin: document.getElementById('btn-submit-pin'),
+
   screenInventory: document.getElementById('screen-inventory'),
   screenEntrada: document.getElementById('screen-entrada'),
   screenSalida: document.getElementById('screen-salida'),
@@ -228,6 +349,9 @@ const el = {
 
   toast: document.getElementById('toast'),
 };
+
+el.btnSubmitPin.addEventListener('click', submitPin);
+el.inputPin.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPin(); });
 
 el.btnGoSalida.addEventListener('click', () => goScreen('salida'));
 el.btnFabEntrada.addEventListener('click', () => goScreen('entrada'));
@@ -258,6 +382,12 @@ function setFieldError(fieldEl, message) {
 }
 
 function renderInventory() {
+  if (state.loading) {
+    el.inventorySubtitle.textContent = 'Cargando…';
+    el.inventoryList.innerHTML = '<div class="hint" style="padding: 60px 0; text-align:center;">Cargando tu inventario…</div>';
+    return;
+  }
+
   const products = state.products;
 
   const productSummaries = products.map(p => {
@@ -338,6 +468,8 @@ function renderEntrada() {
   setFieldError(el.fieldEntradaNombre, state.entradaErrors.nombre);
   setFieldError(el.fieldEntradaPorciones, state.entradaErrors.porciones);
   setFieldError(el.fieldEntradaFecha, state.entradaErrors.fecha);
+  el.btnSubmitEntrada.disabled = state.entradaSubmitting;
+  el.btnSubmitEntrada.textContent = state.entradaSubmitting ? 'Guardando…' : 'Guardar entrada';
 }
 
 function renderSalida() {
@@ -390,10 +522,12 @@ function renderSalida() {
     });
   }
 
-  el.btnSubmitSalida.disabled = state.salidaSelected.length === 0;
+  el.btnSubmitSalida.disabled = state.salidaSubmitting || state.salidaSelected.length === 0;
+  el.btnSubmitSalida.textContent = state.salidaSubmitting ? 'Guardando…' : 'Registrar salida';
 }
 
 function render() {
+  el.screenPin.hidden = state.screen !== 'pin';
   el.screenInventory.hidden = state.screen !== 'inventory';
   el.screenEntrada.hidden = state.screen !== 'entrada';
   el.screenSalida.hidden = state.screen !== 'salida';
@@ -416,4 +550,11 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-render();
+function init() {
+  const pinOk = localStorage.getItem(PIN_OK_KEY) === '1';
+  state.screen = pinOk ? 'inventory' : 'pin';
+  render();
+  if (pinOk) loadData();
+}
+
+init();

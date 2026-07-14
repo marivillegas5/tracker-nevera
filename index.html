@@ -16,8 +16,30 @@
 
   <div class="app-frame">
 
+    <!-- ===== Pantalla: PIN ===== -->
+    <section class="screen" id="screen-pin">
+      <div class="screen-header">
+        <div>
+          <div class="heading">Ingresa tu PIN</div>
+          <div class="subheading">Para ver y editar tu inventario</div>
+        </div>
+      </div>
+
+      <div class="screen-body form">
+        <div class="field" id="field-pin">
+          <label for="input-pin">PIN</label>
+          <input type="password" id="input-pin" inputmode="numeric" maxlength="6" placeholder="••••">
+          <div class="error-message"></div>
+        </div>
+      </div>
+
+      <div class="screen-footer">
+        <button class="btn full-width lg" id="btn-submit-pin">Entrar</button>
+      </div>
+    </section>
+
     <!-- ===== Pantalla: inventario ===== -->
-    <section class="screen" id="screen-inventory">
+    <section class="screen" id="screen-inventory" hidden>
       <div class="screen-header">
         <div>
           <div class="heading">Tu nevera</div>
@@ -99,6 +121,8 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
